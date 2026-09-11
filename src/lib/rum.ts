@@ -1,19 +1,21 @@
-// CloudWatch RUM: real-user monitoring. No-op unless every VITE_RUM_* value is
-// set, so local dev and unconfigured builds skip it entirely. The client is
-// bundled (aws-rum-web) rather than loaded from AWS's CDN so the CSP needs no
-// script-src exception.
+// Deep adapter: RUM adapter at a real seam. Two adapters justify it:
+// real AWS RUM (prod) + no-op adapter (local dev / unconfigured builds).
+// # ponytail: config passed at call site, not read directly; seam is external.
 import { AwsRum, type AwsRumConfig } from 'aws-rum-web'
 
-export function initRum(): void {
-  const appMonitorId = import.meta.env.VITE_RUM_APP_MONITOR_ID
-  const identityPoolId = import.meta.env.VITE_RUM_IDENTITY_POOL_ID
-  const guestRoleArn = import.meta.env.VITE_RUM_GUEST_ROLE_ARN
-  const region = import.meta.env.VITE_RUM_REGION
+export interface RumConfig {
+  appMonitorId?: string
+  identityPoolId?: string
+  guestRoleArn?: string
+  region?: string
+}
 
+export function initRum(config: RumConfig = {}): void {
+  const { appMonitorId, identityPoolId, guestRoleArn, region } = config
   if (!appMonitorId || !identityPoolId || !guestRoleArn || !region) return
 
   try {
-    const config: AwsRumConfig = {
+    const cfg: AwsRumConfig = {
       sessionSampleRate: 1,
       identityPoolId,
       guestRoleArn,
@@ -22,8 +24,12 @@ export function initRum(): void {
       allowCookies: false,
       enableXRay: false,
     }
-    new AwsRum(appMonitorId, '1.0.0', region, config)
+    new AwsRum(appMonitorId, '1.0.0', region, cfg)
   } catch {
     // Monitoring must never break the app.
   }
+}
+
+export function initRumNoOp(): void {
+  // Second adapter: no-op. Justifies the RUM seam.
 }

@@ -51,15 +51,32 @@ jobs:
           npm ci
           npm run build
 
+      - name: Check deploy configuration
+        id: deploy_config
+        env:
+          AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          SITE_BUCKET: ${{ vars.SITE_BUCKET }}
+          CLOUDFRONT_DISTRIBUTION_ID: ${{ vars.CLOUDFRONT_DISTRIBUTION_ID }}
+        run: |
+          if [[ -n "$AWS_DEPLOY_ROLE_ARN" && -n "$SITE_BUCKET" && -n "$CLOUDFRONT_DISTRIBUTION_ID" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipping deploy because one or more required repo variables are missing (AWS_DEPLOY_ROLE_ARN, SITE_BUCKET, CLOUDFRONT_DISTRIBUTION_ID)."
+          fi
+
       - uses: aws-actions/configure-aws-credentials@v4
+        if: steps.deploy_config.outputs.enabled == 'true'
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: us-east-1
 
       - name: Sync to origin bucket
+        if: steps.deploy_config.outputs.enabled == 'true'
         run: aws s3 sync dist/ "s3://${{ vars.SITE_BUCKET }}" --delete
 
       - name: Invalidate CloudFront
+        if: steps.deploy_config.outputs.enabled == 'true'
         run: |
           aws cloudfront create-invalidation \
             --distribution-id "${{ vars.CLOUDFRONT_DISTRIBUTION_ID }}" \

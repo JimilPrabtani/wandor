@@ -1,3 +1,5 @@
+// Deep module: AuthContext. Small interface (useAuth), deep implementation
+// (OAuth, JWT, session). # ponytail: internal helpers hidden; upgrade path = split adapter for in-memory test seam
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import {
   CognitoUserPool,
