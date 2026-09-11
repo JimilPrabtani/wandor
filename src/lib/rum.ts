@@ -1,6 +1,5 @@
-// Deep adapter: RUM adapter at a real seam. Two adapters justify it:
-// real AWS RUM (prod) + no-op adapter (local dev / unconfigured builds).
-// # ponytail: config passed at call site, not read directly; seam is external.
+// RUM adapter. Single adapter; the unset-config early return is the local-dev path.
+// # ponytail: config passed at call site, not read directly
 import { AwsRum, type AwsRumConfig } from 'aws-rum-web'
 
 export interface RumConfig {
@@ -28,8 +27,4 @@ export function initRum(config: RumConfig = {}): void {
   } catch {
     // Monitoring must never break the app.
   }
-}
-
-export function initRumNoOp(): void {
-  // Second adapter: no-op. Justifies the RUM seam.
 }
