@@ -51,7 +51,7 @@ export default function NavBar() {
       <nav className={`max-w-[1360px] mx-auto flex items-center justify-between px-6 md:px-20 pt-5 pb-4 ${isHome ? 'text-wandor-text' : 'text-wandor-dark'}`}>
 
         {/* Left: Wordmark */}
-        <Link to="/" className="font-display text-[36px] md:text-[40px] text-black leading-none select-none no-underline">
+        <Link to="/" className="font-logo text-[36px] md:text-[40px] text-black leading-none select-none no-underline">
           wandor
         </Link>
 

@@ -32,7 +32,7 @@ const FAQS: FaqItem[] = [
     id: 4,
     category: 'Pricing & Pro',
     question: 'Is Wandor free to use?',
-    answer: 'Yes! Our Free tier allows you to browse all destination guides and generate up to 5 curated plans. For unlimited AI trip generation, multi-city stitching, and priority recommendations, you can upgrade to Wandor Pro anytime.'
+    answer: 'Yes! Our Free tier allows you to browse all destination guides and generate up to 7 curated plans. For unlimited AI trip generation, multi-city stitching, and priority recommendations, you can upgrade to Wandor Pro anytime.'
   },
   {
     id: 5,
@@ -44,7 +44,7 @@ const FAQS: FaqItem[] = [
     id: 6,
     category: 'Accounts & History',
     question: 'How do authentication and user accounts work?',
-    answer: 'You can sign up or log in using email/password, or via quick one-click social providers (Google & Apple). Your history syncs automatically across all your devices.'
+    answer: 'Wandor uses Sign in with Google — one click, no passwords to remember. Your history syncs automatically across all your devices.'
   }
 ];
 

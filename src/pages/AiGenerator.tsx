@@ -67,6 +67,12 @@ export default function AiGenerator() {
           setError('Your session has expired. Please log in again.');
         } else if (err.status === 502) {
           setError('Trip generation failed on our end. Please try again in a moment.');
+        } else if (err.status === 503 || err.code === 'model_unavailable') {
+          setError('The AI model is busy right now. Try a shorter trip or try again in a minute.');
+        } else if (err.status === 504 || err.code === 'model_timeout') {
+          setError('Generation timed out. Try fewer days or try again — shorter trips return faster.');
+        } else if (err.code === 'server_misconfigured') {
+          setError('The AI backend is not configured yet (missing API key). Please contact support.');
         } else {
           setError('Something went wrong. Please try again.');
         }

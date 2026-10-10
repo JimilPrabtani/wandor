@@ -89,11 +89,9 @@ export default function Discover() {
               key={trip.id}
               to={`/trip/${trip.id}`}
               role="listitem"
-              className="group relative bg-white/95 p-4 pb-14 border border-white/50 rounded-sm overflow-hidden shadow-[0_4px_16px_rgba(0,0,0,0.1)] hover:shadow-[0_12px_40px_rgba(0,0,0,0.2)] hover:-translate-y-2 backdrop-blur-xl transition-all duration-500 ease-cinematic flex flex-col no-underline text-inherit"
-              style={{
-                 /* Add a very slight random rotation to make them look like scattered polaroids */
-                 transform: `rotate(${(idx % 3 === 0) ? -1 : (idx % 2 === 0) ? 2 : 0}deg)`,
-              }}
+              className={`group relative bg-white/95 p-4 pb-14 border border-white/50 rounded-sm overflow-hidden shadow-[0_4px_16px_rgba(0,0,0,0.1)] hover:shadow-[0_12px_40px_rgba(0,0,0,0.2)] hover:-translate-y-2 backdrop-blur-xl transition-all duration-500 ease-cinematic flex flex-col no-underline text-inherit ${
+                idx % 3 === 0 ? '-rotate-1' : idx % 2 === 0 ? 'rotate-2' : ''
+              }`}
             >
               {/* Vibrant Image Header */}
               <div className="relative h-64 w-full bg-gray-200 overflow-hidden shadow-inner">

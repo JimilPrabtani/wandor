@@ -31,7 +31,9 @@ export default function History() {
         if (cancelled) return;
         setError(err instanceof ApiError && err.status === 401
           ? 'Your session has expired. Please log in again.'
-          : 'Could not load your trip history. Please try again.');
+          : err instanceof ApiError && err.status === 404
+            ? 'History API is not deployed yet. Generate a trip — it will show here once history storage lands.'
+            : 'Could not load your trip history. Please try again.');
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
@@ -179,6 +181,8 @@ export default function History() {
                       <img
                         src={getTripImage({ country: trip.destination })}
                         alt={trip.destination}
+                        loading="lazy"
+                        decoding="async"
                         className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
                       />
                       <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
@@ -275,7 +279,7 @@ export default function History() {
                     value={user.email}
                     className="w-full px-4 py-3 bg-gray-100 border border-gray-200 rounded-2xl font-sans text-sm font-medium text-gray-500 cursor-not-allowed"
                   />
-                  <p className="text-[11px] text-wandor-muted mt-1">Your identity is managed by Amazon Cognito.</p>
+                  <p className="text-[11px] text-wandor-muted mt-1">Signed in with Google.</p>
                 </div>
 
                 <div>
@@ -294,15 +298,17 @@ export default function History() {
               </h2>
 
               <p className="font-sans text-xs text-wandor-muted leading-relaxed mb-6">
-                To change your password, request a verification code to be sent to your registered email address, then set a new password.
+                Wandor uses Sign in with Google — there are no Wandor passwords. Manage your sign-in and security in your Google Account.
               </p>
 
-              <Link
-                to={`/reset-password?email=${encodeURIComponent(user.email)}`}
+              <a
+                href="https://myaccount.google.com/"
+                target="_blank"
+                rel="noreferrer"
                 className="w-full py-4 rounded-full bg-white border border-gray-300 text-wandor-dark font-sans text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-2 hover:bg-gray-50 transition-all cursor-pointer shadow-sm mb-6 no-underline"
               >
-                <KeyRound className="w-4 h-4 text-wandor-dark" /> Reset My Password
-              </Link>
+                <KeyRound className="w-4 h-4 text-wandor-dark" /> Manage Google Account
+              </a>
 
               <div className="pt-6 border-t border-gray-100">
                 <button
