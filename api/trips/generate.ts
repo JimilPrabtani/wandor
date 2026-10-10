@@ -16,10 +16,14 @@
 // gets PROVIDER_TIMEOUT_MS; on Hobby a slow model surfaces as a platform
 // 504, which the frontend maps to a retry message. Pro removes the ceiling.
 
+// Defaults verified against the live OpenRouter catalog on 2026-10-10: both
+// are free text→text chat models advertising response_format support. The
+// :free roster rotates — if generations start 404ing, re-check
+// https://openrouter.ai/api/v1/models and update these (or set the env vars).
 const OPENROUTER_MODEL =
-  process.env.OPENROUTER_MODEL || 'meta-llama/llama-3.3-70b-instruct:free';
+  process.env.OPENROUTER_MODEL || 'google/gemma-4-31b-it:free';
 const OPENROUTER_FALLBACK_MODEL =
-  process.env.OPENROUTER_FALLBACK_MODEL || 'google/gemma-3-27b-it:free';
+  process.env.OPENROUTER_FALLBACK_MODEL || 'nvidia/nemotron-3-super-120b-a12b:free';
 
 // ponytail: 12s per attempt matches the old Lambda budget; shrink to 9s if
 // Hobby 504s dominate, or stream responses for 30-day trips.
@@ -84,13 +88,26 @@ function parseModelJson(text: string | null | undefined, days: number) {
   return obj;
 }
 
-async function callOpenRouter(
+// Structured provider error: carries the HTTP status plus OpenRouter's own
+// error message so logs say WHY a model refused (bad key? wrong modality?
+// guardrail?), instead of just the status number.
+class OpenRouterError extends Error {
+  status: number;
+  providerMessage: string;
+  constructor(status: number, providerMessage: string) {
+    super(`openrouter ${status} ${providerMessage}`.slice(0, 300));
+    this.status = status;
+    this.providerMessage = providerMessage;
+  }
+}
+
+async function chatCompletion(
   key: string,
   model: string,
   prompt: string,
-  maxTokens: number
-) {
-  if (!key) throw new Error('no openrouter key');
+  maxTokens: number,
+  strictJson: boolean
+): Promise<string | undefined> {
   const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -105,17 +122,48 @@ async function callOpenRouter(
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: prompt },
       ],
-      response_format: { type: 'json_object' },
+      ...(strictJson ? { response_format: { type: 'json_object' } } : {}),
       max_tokens: maxTokens,
       temperature: 0.7,
     }),
     signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
   });
-  if (!res.ok) throw new Error(`openrouter ${res.status}`);
+  if (!res.ok) {
+    let providerMessage = '';
+    try {
+      const errBody = (await res.json()) as { error?: { message?: unknown } };
+      if (typeof errBody?.error?.message === 'string') {
+        providerMessage = errBody.error.message;
+      }
+    } catch {
+      // non-JSON error body — status alone will have to do
+    }
+    throw new OpenRouterError(res.status, providerMessage);
+  }
   const data = (await res.json()) as {
     choices?: Array<{ message?: { content?: string } }>;
   };
   return data.choices?.[0]?.message?.content;
+}
+
+async function callOpenRouter(
+  key: string,
+  model: string,
+  prompt: string,
+  maxTokens: number
+): Promise<string | undefined> {
+  if (!key) throw new Error('no openrouter key');
+  try {
+    return await chatCompletion(key, model, prompt, maxTokens, true);
+  } catch (err) {
+    // Free-tier models often reject response_format (400) while happily
+    // returning JSON without it — parseModelJson strips fences, so retry bare.
+    if (err instanceof OpenRouterError && err.status === 400) {
+      console.log(`retry-bare model=${model} was-strict`);
+      return await chatCompletion(key, model, prompt, maxTokens, false);
+    }
+    throw err;
+  }
 }
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
@@ -200,16 +248,40 @@ export default async function handler(req: any, res: any) {
       provider = model;
       break;
     } catch (err: any) {
-      const msg = err?.name === 'TimeoutError' ? 'model_timeout' : String(err?.message || err);
+      if (err?.name === 'TimeoutError') {
+        console.error(`AI attempt failed model=${model} reason=model_timeout`);
+        lastError = 'model_timeout';
+        continue;
+      }
+      if (err instanceof OpenRouterError) {
+        console.error(
+          `AI attempt failed model=${model} status=${err.status} provider=${err.providerMessage.slice(0, 200)}`
+        );
+        // Per https://openrouter.ai/docs/api-reference/errors:
+        // 401 = bad/revoked key (our config), 402 = quota exhausted,
+        // 403 = guardrail/permission block, 404 = model id retired,
+        // 429 = rate limited, 503/529 = no available provider.
+        if (err.status === 401) lastError = 'server_misconfigured';
+        else if (err.status === 402) lastError = 'provider_quota_exceeded';
+        else if (err.status === 503 || err.status === 529) lastError = 'model_unavailable';
+        else lastError = 'generation_failed';
+        continue;
+      }
+      const msg = String(err?.message || err);
       console.error(`AI attempt failed model=${model} reason=${msg.slice(0, 200)}`);
-      if (/openrouter (503|529)/.test(msg)) lastError = 'model_unavailable';
-      else if (msg === 'model_timeout') lastError = 'model_timeout';
-      else lastError = 'generation_failed';
+      lastError = 'generation_failed';
     }
   }
 
   if (!itinerary) {
-    const status = lastError === 'model_unavailable' ? 503 : lastError === 'model_timeout' ? 504 : 502;
+    const status =
+      lastError === 'model_unavailable'
+        ? 503
+        : lastError === 'model_timeout'
+          ? 504
+          : lastError === 'server_misconfigured'
+            ? 500
+            : 502;
     return res.status(status).json({ error: lastError });
   }
 

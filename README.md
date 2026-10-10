@@ -53,8 +53,8 @@ Works in two modes depending on `.env`:
 | `VITE_GOOGLE_CLIENT_ID` | GCP OAuth client id (Google Cloud Console → Credentials). Public — baked into the bundle by design. |
 | `GOOGLE_CLIENT_ID` (server-only) | Same GCP client id, set in Vercel env vars — the API checks ID-token audience against it. |
 | `OPENROUTER_API_KEY` (server-only) | OpenRouter key, set in Vercel env vars. |
-| `OPENROUTER_MODEL` (server-only, optional) | Primary model, e.g. `meta-llama/llama-3.3-70b-instruct:free`. |
-| `OPENROUTER_FALLBACK_MODEL` (server-only, optional) | Second free model, e.g. `google/gemma-3-27b-it:free`. |
+| `OPENROUTER_MODEL` (server-only, optional) | Primary model, e.g. `google/gemma-4-31b-it:free` — must be a text chat model. |
+| `OPENROUTER_FALLBACK_MODEL` (server-only, optional) | Second free model, e.g. `nvidia/nemotron-3-super-120b-a12b:free`. |
 
 **There is deliberately no AI key in the client.** The OpenRouter key lives in
 Vercel environment variables and is only ever read by `api/`. If you find

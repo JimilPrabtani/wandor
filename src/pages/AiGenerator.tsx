@@ -71,6 +71,8 @@ export default function AiGenerator() {
           setError('The AI model is busy right now. Try a shorter trip or try again in a minute.');
         } else if (err.status === 504 || err.code === 'model_timeout') {
           setError('Generation timed out. Try fewer days or try again — shorter trips return faster.');
+        } else if (err.code === 'provider_quota_exceeded') {
+          setError('The AI quota is exhausted right now. Please try again later or contact support.');
         } else if (err.code === 'server_misconfigured') {
           setError('The AI backend is not configured yet (missing API key). Please contact support.');
         } else {
