@@ -112,8 +112,10 @@ async function callOpenRouter(
     signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`openrouter ${res.status}`);
-  const data = await res.json();
-  return data.choices?.[0]?.message?.content as string | undefined;
+  const data = (await res.json()) as {
+    choices?: Array<{ message?: { content?: string } }>;
+  };
+  return data.choices?.[0]?.message?.content;
 }
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
@@ -132,7 +134,7 @@ async function verifyGoogleIdToken(token: string): Promise<string | null> {
       { signal: AbortSignal.timeout(5000) }
     );
     if (!res.ok) return null;
-    const data = await res.json();
+    const data = (await res.json()) as { aud?: unknown; email?: unknown };
     if (data.aud !== GOOGLE_CLIENT_ID) return null;
     return typeof data.email === 'string' ? data.email : null;
   } catch {
