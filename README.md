@@ -55,6 +55,7 @@ Works in two modes depending on `.env`:
 | `OPENROUTER_API_KEY` (server-only) | OpenRouter key, set in Vercel env vars. |
 | `OPENROUTER_MODEL` (server-only, optional) | Primary model, e.g. `google/gemma-4-31b-it:free` — must be a text chat model. |
 | `OPENROUTER_FALLBACK_MODEL` (server-only, optional) | Second free model, e.g. `nvidia/nemotron-3-super-120b-a12b:free`. |
+| `PROVIDER_TIMEOUT_MS` (server-only, optional) | Per-model abort budget in ms (default 25000). Raise for slow free models, but keep attempts × models under the function's `maxDuration` (60s in `vercel.json`, Pro plan). |
 
 **There is deliberately no AI key in the client.** The OpenRouter key lives in
 Vercel environment variables and is only ever read by `api/`. If you find

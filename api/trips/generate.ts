@@ -25,9 +25,17 @@ const OPENROUTER_MODEL =
 const OPENROUTER_FALLBACK_MODEL =
   process.env.OPENROUTER_FALLBACK_MODEL || 'nvidia/nemotron-3-super-120b-a12b:free';
 
-// ponytail: 12s per attempt matches the old Lambda budget; shrink to 9s if
-// Hobby 504s dominate, or stream responses for 30-day trips.
-const PROVIDER_TIMEOUT_MS = 12000;
+// Timeout note: Vercel kills the function at maxDuration (vercel.json sets
+// 60s). Each provider attempt aborts at PROVIDER_TIMEOUT_MS so we fail over
+// to the next model instead of dying mid-chain. Free-tier models are slow
+// starters — 25s default; raise via the PROVIDER_TIMEOUT_MS env var (ms) if
+// your models need longer, but keep attempts x models under maxDuration.
+// On Hobby (10s platform ceiling) slow models surface as a platform 504,
+// which the frontend maps to a retry message — Pro removes the ceiling.
+const PROVIDER_TIMEOUT_MS = Math.max(
+  5000,
+  Number.parseInt(process.env.PROVIDER_TIMEOUT_MS || '', 10) || 25000
+);
 
 const SYSTEM_PROMPT = `You are Wandor's senior travel curator. You design itineraries people actually follow: specific, realistic, and exciting.
 
