@@ -85,7 +85,7 @@ every visitor.
 
 | Route | Body / returns |
 |---|---|
-| `POST /api/trips/generate` | `{destination, days (1–30), preferences?}` → `{trip}` with the structured itinerary. `503 {error:"model_unavailable"}` / `504 {error:"model_timeout"}` when free models are busy. |
+| `POST /api/trips/generate` | `{destination, days (1–30), preferences?}` → `{trip}` with the structured itinerary. `503 {error:"model_unavailable"}` / `504 {error:"model_timeout"}` when free models are busy, `429 {error:"rate_limited"}` on rate limits. |
 | `GET /api/trips` | Stub: `{trips: [], generated: 0, limit: 7}` until history storage lands |
 | `DELETE /api/trips/{id}` | Stub: acknowledges the id |
 

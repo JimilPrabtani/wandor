@@ -84,15 +84,19 @@ function validateItinerary(obj: any, days: number) {
 }
 
 function parseModelJson(text: string | null | undefined, days: number) {
-  if (!text) throw new Error('empty model response');
+  if (!text) throw new Error('empty model response (len=0)');
+  // Lengths ride along so logs distinguish empty vs truncated vs wrong-shape.
   const stripped = text.replace(/^\s*```(?:json)?\s*|\s*```\s*$/g, '');
   let obj: any;
   try {
     obj = JSON.parse(stripped);
   } catch {
-    throw new Error('model returned non-JSON');
+    throw new Error(`model returned non-JSON (len=${stripped.length})`);
   }
-  if (!validateItinerary(obj, days)) throw new Error('model JSON failed validation');
+  if (!validateItinerary(obj, days))
+    throw new Error(
+      `model JSON failed validation (len=${stripped.length}, days=${obj?.days?.length ?? 'n/a'})`
+    );
   return obj;
 }
 
@@ -245,7 +249,12 @@ export default async function handler(req: any, res: any) {
   const attempts = [OPENROUTER_MODEL, OPENROUTER_FALLBACK_MODEL].filter(
     (m, i, arr) => m && arr.indexOf(m) === i
   );
-  let lastError = 'generation_failed';
+  // First failure wins: it describes the user's configured primary model.
+  // A fast fallback failure must not overwrite (and hide) the primary signal.
+  let lastError: string | null = null;
+  const setFirstError = (code: string) => {
+    if (!lastError) lastError = code;
+  };
   let provider = 'openrouter';
   let itinerary: any = null;
 
@@ -258,7 +267,7 @@ export default async function handler(req: any, res: any) {
     } catch (err: any) {
       if (err?.name === 'TimeoutError') {
         console.error(`AI attempt failed model=${model} reason=model_timeout`);
-        lastError = 'model_timeout';
+        setFirstError('model_timeout');
         continue;
       }
       if (err instanceof OpenRouterError) {
@@ -269,28 +278,32 @@ export default async function handler(req: any, res: any) {
         // 401 = bad/revoked key (our config), 402 = quota exhausted,
         // 403 = guardrail/permission block, 404 = model id retired,
         // 429 = rate limited, 503/529 = no available provider.
-        if (err.status === 401) lastError = 'server_misconfigured';
-        else if (err.status === 402) lastError = 'provider_quota_exceeded';
-        else if (err.status === 503 || err.status === 529) lastError = 'model_unavailable';
-        else lastError = 'generation_failed';
+        if (err.status === 401) setFirstError('server_misconfigured');
+        else if (err.status === 402) setFirstError('provider_quota_exceeded');
+        else if (err.status === 429) setFirstError('rate_limited');
+        else if (err.status === 503 || err.status === 529) setFirstError('model_unavailable');
+        else setFirstError('generation_failed');
         continue;
       }
       const msg = String(err?.message || err);
       console.error(`AI attempt failed model=${model} reason=${msg.slice(0, 200)}`);
-      lastError = 'generation_failed';
+      setFirstError('generation_failed');
     }
   }
 
   if (!itinerary) {
+    const code: string = lastError ?? 'generation_failed';
     const status =
-      lastError === 'model_unavailable'
+      code === 'model_unavailable'
         ? 503
-        : lastError === 'model_timeout'
+        : code === 'model_timeout'
           ? 504
-          : lastError === 'server_misconfigured'
+          : code === 'server_misconfigured'
             ? 500
-            : 502;
-    return res.status(status).json({ error: lastError });
+            : code === 'rate_limited'
+              ? 429
+              : 502;
+    return res.status(status).json({ error: code });
   }
 
   const createdAt = new Date().toISOString();

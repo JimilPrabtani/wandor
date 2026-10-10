@@ -73,6 +73,8 @@ export default function AiGenerator() {
           setError('Generation timed out. Try fewer days or try again — shorter trips return faster.');
         } else if (err.code === 'provider_quota_exceeded') {
           setError('The AI quota is exhausted right now. Please try again later or contact support.');
+        } else if (err.code === 'rate_limited' || err.status === 429) {
+          setError('Too many requests right now. Wait a minute and try again.');
         } else if (err.code === 'server_misconfigured') {
           setError('The AI backend is not configured yet (missing API key). Please contact support.');
         } else {
