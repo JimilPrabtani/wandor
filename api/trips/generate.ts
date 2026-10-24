@@ -21,9 +21,9 @@
 // :free roster rotates — if generations start 404ing, re-check
 // https://openrouter.ai/api/v1/models and update these (or set the env vars).
 const OPENROUTER_MODEL =
-  process.env.OPENROUTER_MODEL || 'google/gemma-4-31b-it:free';
+  process.env.OPENROUTER_MODEL || 'recursive/flint-v1.0:free';
 const OPENROUTER_FALLBACK_MODEL =
-  process.env.OPENROUTER_FALLBACK_MODEL || 'nvidia/nemotron-3-super-120b-a12b:free';
+  process.env.OPENROUTER_FALLBACK_MODEL || 'nvidia/nemotron-3.5-embed-8b:free';
 
 // Timeout note: Vercel kills the function at maxDuration (vercel.json sets
 // 60s). Each provider attempt aborts at PROVIDER_TIMEOUT_MS so we fail over
