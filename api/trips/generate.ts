@@ -13,13 +13,13 @@
 // History persistence (KV/Postgres) is deferred: this endpoint returns the
 // trip without storing it.
 
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
 
 // OpenRouter defaults (used only when GEMINI_API_KEY is not set).
 const OPENROUTER_MODEL =
-  process.env.OPENROUTER_MODEL || 'recursive/flint-v1.0:free';
+  process.env.OPENROUTER_MODEL || 'google/gemma-4-31b-it:free';
 const OPENROUTER_FALLBACK_MODEL =
-  process.env.OPENROUTER_FALLBACK_MODEL || 'nvidia/nemotron-3.5-embed-8b:free';
+  process.env.OPENROUTER_FALLBACK_MODEL || 'nvidia/nemotron-3-super-120b-a12b:free';
 
 const PROVIDER_TIMEOUT_MS = Math.max(
   5000,
