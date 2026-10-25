@@ -52,7 +52,9 @@ Works in two modes depending on `.env`:
 |---|---|
 | `VITE_GOOGLE_CLIENT_ID` | GCP OAuth client id (Google Cloud Console → Credentials). Public — baked into the bundle by design. |
 | `GOOGLE_CLIENT_ID` (server-only) | Same GCP client id, set in Vercel env vars — the API checks ID-token audience against it. |
-| `OPENROUTER_API_KEY` (server-only) | OpenRouter key, set in Vercel env vars. |
+| `GEMINI_API_KEY` (server-only) | Google AI Studio key (https://aistudio.google.com/apikey). Preferred AI provider — never prefixed with `VITE_`. |
+| `GEMINI_MODEL` (server-only, optional) | Gemini model id, e.g. `gemini-2.0-flash` (default). Must be a text chat model. |
+| `OPENROUTER_API_KEY` (server-only) | Fallback OpenRouter key, set in Vercel env vars (used when `GEMINI_API_KEY` is absent). |
 | `OPENROUTER_MODEL` (server-only, optional) | Primary model, e.g. `google/gemma-4-31b-it:free` — must be a text chat model. |
 | `OPENROUTER_FALLBACK_MODEL` (server-only, optional) | Second free model, e.g. `nvidia/nemotron-3-super-120b-a12b:free`. |
 | `PROVIDER_TIMEOUT_MS` (server-only, optional) | Per-model abort budget in ms (default 25000). Raise for slow free models, but keep attempts × models under the function's `maxDuration` (60s in `vercel.json`, Pro plan). |

@@ -1,37 +1,26 @@
 // POST /api/trips/generate — Vercel serverless function (stateless Phase 1).
 //
-// Reads ONLY server env (never VITE_*): OPENROUTER_API_KEY (required),
-// OPENROUTER_MODEL (default: a good free instruct model),
-// OPENROUTER_FALLBACK_MODEL (optional second free model).
-// Set these in the Vercel dashboard -> Project Settings -> Environment Variables.
+// Reads ONLY server env (never VITE_*):
+//   GEMINI_API_KEY (preferred) + GEMINI_MODEL (default: gemini-2.0-flash)
+//   OPENROUTER_API_KEY (fallback) + OPENROUTER_MODEL / OPENROUTER_FALLBACK_MODEL
+//   GOOGLE_CLIENT_ID (required, for ID-token audience check)
+// Set these in the Vercel dashboard -> Project Settings -> Environment Variables
+// (or in .env for `vercel dev`).
 //
 // Auth: the SPA sends the Google ID token as a Bearer header. It is
 // re-validated here with Google (signature + expiry + audience) on every
-// request, so a stolen-or-forged token cannot burn OpenRouter quota.
-// Requires the server env GOOGLE_CLIENT_ID (same GCP OAuth client id as the
-// VITE_GOOGLE_CLIENT_ID the frontend uses). History persistence (KV/Postgres)
-// is deferred: this endpoint returns the trip without storing it.
-//
-// Timeout note: Vercel Hobby kills functions at ~10s. Each provider attempt
-// gets PROVIDER_TIMEOUT_MS; on Hobby a slow model surfaces as a platform
-// 504, which the frontend maps to a retry message. Pro removes the ceiling.
+// request, so a stolen-or-forged token cannot burn AI quota.
+// History persistence (KV/Postgres) is deferred: this endpoint returns the
+// trip without storing it.
 
-// Defaults verified against the live OpenRouter catalog on 2026-10-10: both
-// are free text→text chat models advertising response_format support. The
-// :free roster rotates — if generations start 404ing, re-check
-// https://openrouter.ai/api/v1/models and update these (or set the env vars).
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
+
+// OpenRouter defaults (used only when GEMINI_API_KEY is not set).
 const OPENROUTER_MODEL =
   process.env.OPENROUTER_MODEL || 'recursive/flint-v1.0:free';
 const OPENROUTER_FALLBACK_MODEL =
   process.env.OPENROUTER_FALLBACK_MODEL || 'nvidia/nemotron-3.5-embed-8b:free';
 
-// Timeout note: Vercel kills the function at maxDuration (vercel.json sets
-// 60s). Each provider attempt aborts at PROVIDER_TIMEOUT_MS so we fail over
-// to the next model instead of dying mid-chain. Free-tier models are slow
-// starters — 25s default; raise via the PROVIDER_TIMEOUT_MS env var (ms) if
-// your models need longer, but keep attempts x models under maxDuration.
-// On Hobby (10s platform ceiling) slow models surface as a platform 504,
-// which the frontend maps to a retry message — Pro removes the ceiling.
 const PROVIDER_TIMEOUT_MS = Math.max(
   5000,
   Number.parseInt(process.env.PROVIDER_TIMEOUT_MS || '', 10) || 25000
@@ -85,7 +74,6 @@ function validateItinerary(obj: any, days: number) {
 
 function parseModelJson(text: string | null | undefined, days: number) {
   if (!text) throw new Error('empty model response (len=0)');
-  // Lengths ride along so logs distinguish empty vs truncated vs wrong-shape.
   const stripped = text.replace(/^\s*```(?:json)?\s*|\s*```\s*$/g, '');
   let obj: any;
   try {
@@ -100,9 +88,16 @@ function parseModelJson(text: string | null | undefined, days: number) {
   return obj;
 }
 
-// Structured provider error: carries the HTTP status plus OpenRouter's own
-// error message so logs say WHY a model refused (bad key? wrong modality?
-// guardrail?), instead of just the status number.
+class GeminiError extends Error {
+  status: number;
+  providerMessage: string;
+  constructor(status: number, providerMessage: string) {
+    super(`gemini ${status} ${providerMessage}`.slice(0, 300));
+    this.status = status;
+    this.providerMessage = providerMessage;
+  }
+}
+
 class OpenRouterError extends Error {
   status: number;
   providerMessage: string;
@@ -111,6 +106,63 @@ class OpenRouterError extends Error {
     this.status = status;
     this.providerMessage = providerMessage;
   }
+}
+
+async function callGemini(
+  key: string,
+  model: string,
+  prompt: string,
+  maxTokens: number
+): Promise<string | undefined> {
+  if (!key) throw new Error('no gemini key');
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+    model
+  )}:generateContent`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-goog-api-key': key,
+    },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: 0.7,
+        maxOutputTokens: maxTokens,
+        responseMimeType: 'application/json',
+      },
+    }),
+    signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    let providerMessage = '';
+    try {
+      const errBody = (await res.json()) as { error?: { message?: unknown } };
+      if (typeof errBody?.error?.message === 'string') {
+        providerMessage = errBody.error.message;
+      }
+    } catch {
+      // non-JSON error body
+    }
+    throw new GeminiError(res.status, providerMessage);
+  }
+  const data = (await res.json()) as {
+    candidates?: Array<{
+      content?: { parts?: Array<{ text?: string }> };
+      finishReason?: string;
+    }>;
+  };
+  const candidate = data?.candidates?.[0];
+  if (
+    candidate?.finishReason &&
+    candidate.finishReason !== 'STOP' &&
+    candidate.finishReason !== 'MAX_TOKENS'
+  ) {
+    throw new GeminiError(502, candidate.finishReason);
+  }
+  const text = candidate?.content?.parts?.map((p) => p.text || '').join('');
+  return text;
 }
 
 async function chatCompletion(
@@ -148,7 +200,7 @@ async function chatCompletion(
         providerMessage = errBody.error.message;
       }
     } catch {
-      // non-JSON error body — status alone will have to do
+      // non-JSON error body
     }
     throw new OpenRouterError(res.status, providerMessage);
   }
@@ -168,8 +220,6 @@ async function callOpenRouter(
   try {
     return await chatCompletion(key, model, prompt, maxTokens, true);
   } catch (err) {
-    // Free-tier models often reject response_format (400) while happily
-    // returning JSON without it — parseModelJson strips fences, so retry bare.
     if (err instanceof OpenRouterError && err.status === 400) {
       console.log(`retry-bare model=${model} was-strict`);
       return await chatCompletion(key, model, prompt, maxTokens, false);
@@ -180,9 +230,6 @@ async function callOpenRouter(
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 
-// Ask Google whether this ID token is genuine, unexpired, and minted for us.
-// Returns the verified email, or null. (tokeninfo is ~50ms and generation
-// requests are infrequent, so no cache — keep the stateless function simple.)
 async function verifyGoogleIdToken(token: string): Promise<string | null> {
   if (!GOOGLE_CLIENT_ID) {
     console.error('GOOGLE_CLIENT_ID missing');
@@ -235,49 +282,81 @@ export default async function handler(req: any, res: any) {
     return res.status(400).json({ error: 'days_must_be_1_to_30' });
   }
 
-  const key = process.env.OPENROUTER_API_KEY;
-  if (!key) {
-    console.error('OPENROUTER_API_KEY missing');
+  const geminiKey = process.env.GEMINI_API_KEY;
+  const openrouterKey = process.env.OPENROUTER_API_KEY;
+
+  type Attempt = { provider: string; model: string; run: () => Promise<string | undefined> };
+  const attempts: Attempt[] = [];
+
+  const prompt = userPrompt(destination, days, preferences);
+  const maxTokens = Math.min(8000, Math.max(2048, days * 400));
+
+  if (geminiKey) {
+    attempts.push({
+      provider: 'gemini',
+      model: GEMINI_MODEL,
+      run: () => callGemini(geminiKey, GEMINI_MODEL, prompt, maxTokens),
+    });
+  }
+  if (openrouterKey) {
+    for (const m of [OPENROUTER_MODEL, OPENROUTER_FALLBACK_MODEL]) {
+      if (m) {
+        attempts.push({
+          provider: 'openrouter',
+          model: m,
+          run: () => callOpenRouter(openrouterKey, m, prompt, maxTokens),
+        });
+      }
+    }
+  }
+
+  // de-dupe identical provider+model
+  const unique = attempts.filter(
+    (a, i, arr) => arr.findIndex((x) => x.provider === a.provider && x.model === a.model) === i
+  );
+
+  if (unique.length === 0) {
+    console.error('GEMINI_API_KEY / OPENROUTER_API_KEY missing');
     return res.status(500).json({ error: 'server_misconfigured' });
   }
 
-  const prompt = userPrompt(destination, days, preferences);
-  // Scale output budget with trip length so 30-day trips fit but short
-  // trips stay fast (Hobby 10s ceiling).
-  const maxTokens = Math.min(8000, Math.max(2048, days * 400));
-
-  const attempts = [OPENROUTER_MODEL, OPENROUTER_FALLBACK_MODEL].filter(
-    (m, i, arr) => m && arr.indexOf(m) === i
-  );
-  // First failure wins: it describes the user's configured primary model.
-  // A fast fallback failure must not overwrite (and hide) the primary signal.
   let lastError: string | null = null;
   const setFirstError = (code: string) => {
     if (!lastError) lastError = code;
   };
-  let provider = 'openrouter';
+  let provider = unique[0].model;
   let itinerary: any = null;
 
-  for (const model of attempts) {
+  for (const attempt of unique) {
+    const { model, run } = attempt;
     try {
-      const text = await callOpenRouter(key, model, prompt, maxTokens);
+      const text = await run();
       itinerary = parseModelJson(text, days);
       provider = model;
       break;
     } catch (err: any) {
-      if (err?.name === 'TimeoutError') {
+      const isTimeout =
+        err?.name === 'TimeoutError' || err?.name === 'AbortError';
+      if (isTimeout) {
         console.error(`AI attempt failed model=${model} reason=model_timeout`);
         setFirstError('model_timeout');
+        continue;
+      }
+      if (err instanceof GeminiError) {
+        console.error(
+          `AI attempt failed model=${model} status=${err.status} provider=${err.providerMessage.slice(0, 200)}`
+        );
+        if (err.status === 401 || err.status === 403) setFirstError('server_misconfigured');
+        else if (err.status === 402) setFirstError('provider_quota_exceeded');
+        else if (err.status === 429) setFirstError('rate_limited');
+        else if (err.status === 503 || err.status === 504) setFirstError('model_unavailable');
+        else setFirstError('generation_failed');
         continue;
       }
       if (err instanceof OpenRouterError) {
         console.error(
           `AI attempt failed model=${model} status=${err.status} provider=${err.providerMessage.slice(0, 200)}`
         );
-        // Per https://openrouter.ai/docs/api-reference/errors:
-        // 401 = bad/revoked key (our config), 402 = quota exhausted,
-        // 403 = guardrail/permission block, 404 = model id retired,
-        // 429 = rate limited, 503/529 = no available provider.
         if (err.status === 401) setFirstError('server_misconfigured');
         else if (err.status === 402) setFirstError('provider_quota_exceeded');
         else if (err.status === 429) setFirstError('rate_limited');
