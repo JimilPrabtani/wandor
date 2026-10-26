@@ -23,7 +23,7 @@ export default function ItineraryView({ itinerary }: { itinerary: Itinerary }) {
         {itinerary.days.map((day) => (
           <div
             key={day.day}
-            className="bg-white/85 border-[3px] border-white rounded-[32px] p-6 md:p-8 shadow-[0_0_4px_0_rgba(0,0,0,0.12)] backdrop-blur-xl transition-shadow duration-300 hover:shadow-lg [content-visibility:auto] [contain-intrinsic-size:auto_420px]"
+            className="bg-gray-50 border border-gray-200 rounded-[32px] p-6 md:p-8 shadow-sm transition-shadow duration-300 hover:shadow-lg [content-visibility:auto] [contain-intrinsic-size:auto_420px]"
           >
             <span className="inline-block font-sans text-[11px] font-bold text-wandor-prompt uppercase tracking-widest mb-3 bg-wandor-prompt/10 px-3 py-1 rounded-full">
               Day {day.day}
@@ -78,7 +78,7 @@ export default function ItineraryView({ itinerary }: { itinerary: Itinerary }) {
       </div>
 
       {itinerary.insiderTips?.length > 0 && (
-        <div className="mt-6 bg-amber-50/80 border-2 border-amber-200/60 rounded-[32px] p-6 md:p-8">
+        <div className="mt-6 bg-amber-50 border border-amber-200 rounded-[32px] p-6 md:p-8">
           <p className="font-sans text-sm font-bold uppercase tracking-wider text-wandor-dark mb-3 flex items-center gap-2">
             <Lightbulb className="w-4 h-4 text-amber-500" /> Insider Tips
           </p>

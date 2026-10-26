@@ -13,7 +13,14 @@
 // History persistence (KV/Postgres) is deferred: this endpoint returns the
 // trip without storing it.
 
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+const CONFIGURED_GEMINI_MODEL = (process.env.GEMINI_MODEL || '').trim();
+const GEMINI_MODEL = CONFIGURED_GEMINI_MODEL || 'gemini-2.0-flash';
+
+// Stable Gemini fallbacks tried in order if the configured model fails.
+// This protects against a misconfigured/retired model name in env
+// (e.g. a non-existent "gemini-3.8-flash") — generation falls through
+// to a known-good model instead of hard-failing.
+const GEMINI_FALLBACK_MODELS = ['gemini-2.0-flash', 'gemini-1.5-flash'];
 
 // OpenRouter defaults (used only when GEMINI_API_KEY is not set).
 const OPENROUTER_MODEL =
@@ -23,8 +30,16 @@ const OPENROUTER_FALLBACK_MODEL =
 
 const PROVIDER_TIMEOUT_MS = Math.max(
   5000,
-  Number.parseInt(process.env.PROVIDER_TIMEOUT_MS || '', 10) || 25000
+  Number.parseInt(process.env.PROVIDER_TIMEOUT_MS || '', 10) || 50000
 );
+
+// One retry per model for transient failures (timeout / 429 / 5xx / bad JSON).
+const MAX_TRIES_PER_MODEL = 2;
+const RETRY_BASE_DELAY_MS = 1200;
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 const SYSTEM_PROMPT = `You are Wandor's senior travel curator. You design itineraries people actually follow: specific, realistic, and exciting.
 
@@ -72,9 +87,29 @@ function validateItinerary(obj: any, days: number) {
   );
 }
 
+function extractJsonObject(text: string): string {
+  let stripped = text.trim().replace(/^\s*```(?:json)?\s*|\s*```\s*$/g, '').trim();
+  // Some models wrap JSON in prose ("Here is your itinerary: {...}").
+  // Slice from the first "{" to the last "}" so JSON.parse sees only the object.
+  const first = stripped.indexOf('{');
+  const last = stripped.lastIndexOf('}');
+  if (first !== -1 && last !== -1 && last > first) {
+    stripped = stripped.slice(first, last + 1);
+  }
+  // Repair trailing commas that free-tier models often emit: {"a":1,} / ["a",]
+  stripped = stripped.replace(/,\s*([}\]])/g, '$1');
+  return stripped;
+}
+
 function parseModelJson(text: string | null | undefined, days: number) {
-  if (!text) throw new Error('empty model response (len=0)');
-  const stripped = text.replace(/^\s*```(?:json)?\s*|\s*```\s*$/g, '');
+  if (!text || !text.trim()) throw new Error('empty model response (len=0)');
+  const stripped = extractJsonObject(text);
+  // Guard against truncated output (MAX_TOKENS cut mid-JSON): the most
+  // common 7-day failure. Surface a clear reason so the caller retries
+  // instead of returning a confusing validation error.
+  if (stripped.length < 200) {
+    throw new Error(`model returned non-JSON (len=${stripped.length})`);
+  }
   let obj: any;
   try {
     obj = JSON.parse(stripped);
@@ -285,18 +320,35 @@ export default async function handler(req: any, res: any) {
   const geminiKey = process.env.GEMINI_API_KEY;
   const openrouterKey = process.env.OPENROUTER_API_KEY;
 
-  type Attempt = { provider: string; model: string; run: () => Promise<string | undefined> };
+  type Attempt = {
+    provider: string;
+    model: string;
+    run: () => Promise<string | undefined>;
+    repairRun: () => Promise<string | undefined>;
+  };
   const attempts: Attempt[] = [];
 
   const prompt = userPrompt(destination, days, preferences);
-  const maxTokens = Math.min(8000, Math.max(2048, days * 400));
+  // ~600 tokens/day covers specific places + food + tips; floor 3000 so
+  // short trips aren't starved, cap 8000 to stay within free-tier limits.
+  // (7 days => 4200 tokens; the old days*400=2800 budget truncated long
+  // trips mid-JSON, surfacing as "model returned non-JSON".)
+  const maxTokens = Math.min(8000, Math.max(3000, days * 600));
+  // On a JSON-shape retry, nudge the model to emit bare JSON only.
+  const repairSuffix =
+    '\n\nIMPORTANT: Your previous response was not valid JSON. Reply with ONLY the JSON object, no prose, no markdown fences.';
 
   if (geminiKey) {
-    attempts.push({
-      provider: 'gemini',
-      model: GEMINI_MODEL,
-      run: () => callGemini(geminiKey, GEMINI_MODEL, prompt, maxTokens),
-    });
+    const geminiModels = [GEMINI_MODEL, ...GEMINI_FALLBACK_MODELS];
+    for (const m of geminiModels) {
+      if (!m) continue;
+      attempts.push({
+        provider: 'gemini',
+        model: m,
+        run: () => callGemini(geminiKey, m, prompt, maxTokens),
+        repairRun: () => callGemini(geminiKey, m, prompt + repairSuffix, maxTokens),
+      });
+    }
   }
   if (openrouterKey) {
     for (const m of [OPENROUTER_MODEL, OPENROUTER_FALLBACK_MODEL]) {
@@ -305,6 +357,8 @@ export default async function handler(req: any, res: any) {
           provider: 'openrouter',
           model: m,
           run: () => callOpenRouter(openrouterKey, m, prompt, maxTokens),
+          repairRun: () =>
+            callOpenRouter(openrouterKey, m, prompt + repairSuffix, maxTokens),
         });
       }
     }
@@ -328,9 +382,10 @@ export default async function handler(req: any, res: any) {
   let itinerary: any = null;
 
   for (const attempt of unique) {
-    const { model, run } = attempt;
+    const { model } = attempt;
+    for (let tryN = 1; tryN <= MAX_TRIES_PER_MODEL; tryN++) {
     try {
-      const text = await run();
+      const text = tryN === 1 ? await attempt.run() : await attempt.repairRun();
       itinerary = parseModelJson(text, days);
       provider = model;
       break;
@@ -338,36 +393,60 @@ export default async function handler(req: any, res: any) {
       const isTimeout =
         err?.name === 'TimeoutError' || err?.name === 'AbortError';
       if (isTimeout) {
-        console.error(`AI attempt failed model=${model} reason=model_timeout`);
+        console.error(`AI attempt failed model=${model} try=${tryN} reason=model_timeout`);
         setFirstError('model_timeout');
-        continue;
+        if (tryN < MAX_TRIES_PER_MODEL) {
+          await sleep(RETRY_BASE_DELAY_MS * tryN);
+          continue;
+        }
+        break;
       }
       if (err instanceof GeminiError) {
         console.error(
-          `AI attempt failed model=${model} status=${err.status} provider=${err.providerMessage.slice(0, 200)}`
+          `AI attempt failed model=${model} try=${tryN} status=${err.status} provider=${err.providerMessage.slice(0, 200)}`
         );
-        if (err.status === 401 || err.status === 403) setFirstError('server_misconfigured');
-        else if (err.status === 402) setFirstError('provider_quota_exceeded');
+        if (err.status === 401 || err.status === 403) { setFirstError('server_misconfigured'); break; }
+        else if (err.status === 402) { setFirstError('provider_quota_exceeded'); break; }
         else if (err.status === 429) setFirstError('rate_limited');
         else if (err.status === 503 || err.status === 504) setFirstError('model_unavailable');
         else setFirstError('generation_failed');
-        continue;
+        const retryable = err.status === 429 || err.status === 503 || err.status === 504 || err.status === 529;
+        if (retryable && tryN < MAX_TRIES_PER_MODEL) {
+          await sleep(RETRY_BASE_DELAY_MS * tryN);
+          continue;
+        }
+        break;
       }
       if (err instanceof OpenRouterError) {
         console.error(
-          `AI attempt failed model=${model} status=${err.status} provider=${err.providerMessage.slice(0, 200)}`
+          `AI attempt failed model=${model} try=${tryN} status=${err.status} provider=${err.providerMessage.slice(0, 200)}`
         );
-        if (err.status === 401) setFirstError('server_misconfigured');
-        else if (err.status === 402) setFirstError('provider_quota_exceeded');
+        if (err.status === 401) { setFirstError('server_misconfigured'); break; }
+        else if (err.status === 402) { setFirstError('provider_quota_exceeded'); break; }
         else if (err.status === 429) setFirstError('rate_limited');
         else if (err.status === 503 || err.status === 529) setFirstError('model_unavailable');
         else setFirstError('generation_failed');
-        continue;
+        const retryable = err.status === 429 || err.status === 503 || err.status === 529 || err.status === 504;
+        if (retryable && tryN < MAX_TRIES_PER_MODEL) {
+          await sleep(RETRY_BASE_DELAY_MS * tryN);
+          continue;
+        }
+        break;
       }
       const msg = String(err?.message || err);
-      console.error(`AI attempt failed model=${model} reason=${msg.slice(0, 200)}`);
+      console.error(`AI attempt failed model=${model} try=${tryN} reason=${msg.slice(0, 200)}`);
+      // Bad-JSON / validation failures are worth one repair retry on the
+      // same model before falling through to the next model.
+      const isJsonShape = msg.includes('non-JSON') || msg.includes('failed validation') || msg.includes('empty model response');
       setFirstError('generation_failed');
+      if (isJsonShape && tryN < MAX_TRIES_PER_MODEL) {
+        await sleep(RETRY_BASE_DELAY_MS * tryN);
+        continue;
+      }
+      break;
     }
+    }
+    if (itinerary) break;
   }
 
   if (!itinerary) {
