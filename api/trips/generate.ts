@@ -1,11 +1,12 @@
 // POST /api/trips/generate — Vercel serverless function (stateless Phase 1).
 //
-// Reads ONLY server env (never VITE_*):
-//   GEMINI_API_KEY (preferred) + GEMINI_MODEL (default: gemini-2.0-flash)
-//   OPENROUTER_API_KEY (fallback) + OPENROUTER_MODEL / OPENROUTER_FALLBACK_MODEL
+// Env (set in Vercel dashboard -> Project Settings -> Environment Variables,
+// or in .env for `vercel dev`):
 //   GOOGLE_CLIENT_ID (required, for ID-token audience check)
-// Set these in the Vercel dashboard -> Project Settings -> Environment Variables
-// (or in .env for `vercel dev`).
+//   GEMINI_API_KEY (preferred) + GEMINI_MODEL (or GOOGLE_MODEL, default: gemini-2.0-flash)
+//   OPENROUTER_API_KEY (fallback) + OPENROUTER_MODEL / OPENROUTER_FALLBACK_MODEL
+// Everything else (timeouts, retries, token budgets) is a fixed default
+// in code below — no other env vars needed.
 //
 // Auth: the SPA sends the Google ID token as a Bearer header. It is
 // re-validated here with Google (signature + expiry + audience) on every
@@ -13,8 +14,12 @@
 // History persistence (KV/Postgres) is deferred: this endpoint returns the
 // trip without storing it.
 
-const CONFIGURED_GEMINI_MODEL = (process.env.GEMINI_MODEL || '').trim();
-const GEMINI_MODEL = CONFIGURED_GEMINI_MODEL || 'gemini-2.0-flash';
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+// Accept GEMINI_MODEL, with GOOGLE_MODEL as an alias for the same value.
+const GEMINI_MODEL =
+  (process.env.GEMINI_MODEL || process.env.GOOGLE_MODEL || '').trim() ||
+  'gemini-2.0-flash';
 
 // Stable Gemini fallbacks tried in order if the configured model fails.
 // This protects against a misconfigured/retired model name in env
@@ -22,16 +27,13 @@ const GEMINI_MODEL = CONFIGURED_GEMINI_MODEL || 'gemini-2.0-flash';
 // to a known-good model instead of hard-failing.
 const GEMINI_FALLBACK_MODELS = ['gemini-2.0-flash', 'gemini-1.5-flash'];
 
-// OpenRouter defaults (used only when GEMINI_API_KEY is not set).
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
 const OPENROUTER_MODEL =
   process.env.OPENROUTER_MODEL || 'google/gemma-4-31b-it:free';
 const OPENROUTER_FALLBACK_MODEL =
   process.env.OPENROUTER_FALLBACK_MODEL || 'nvidia/nemotron-3-super-120b-a12b:free';
 
-const PROVIDER_TIMEOUT_MS = Math.max(
-  5000,
-  Number.parseInt(process.env.PROVIDER_TIMEOUT_MS || '', 10) || 50000
-);
+const PROVIDER_TIMEOUT_MS = 50000;
 
 // One retry per model for transient failures (timeout / 429 / 5xx / bad JSON).
 const MAX_TRIES_PER_MODEL = 2;
@@ -263,8 +265,6 @@ async function callOpenRouter(
   }
 }
 
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
-
 async function verifyGoogleIdToken(token: string): Promise<string | null> {
   if (!GOOGLE_CLIENT_ID) {
     console.error('GOOGLE_CLIENT_ID missing');
@@ -317,8 +317,8 @@ export default async function handler(req: any, res: any) {
     return res.status(400).json({ error: 'days_must_be_1_to_30' });
   }
 
-  const geminiKey = process.env.GEMINI_API_KEY;
-  const openrouterKey = process.env.OPENROUTER_API_KEY;
+  const geminiKey = GEMINI_API_KEY;
+  const openrouterKey = OPENROUTER_API_KEY;
 
   type Attempt = {
     provider: string;

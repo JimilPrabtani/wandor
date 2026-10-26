@@ -2,8 +2,7 @@
 // Loads the GIS script on demand (once per page) so index.html stays clean.
 import { useEffect, useRef, useState } from 'react';
 import { useAuth, googleClientId } from '../context/AuthContext';
-
-const GIS_SRC = 'https://accounts.google.com/gsi/client';
+import { GIS_SRC } from '../lib/config';
 
 function loadGis(): Promise<void> {
   if (window.google?.accounts?.id) return Promise.resolve();

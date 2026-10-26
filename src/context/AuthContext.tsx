@@ -3,6 +3,7 @@
 // client-side, and the Vercel API re-validates it with Google on every
 // generation request. When it expires the user signs in again (one click).
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { GOOGLE_CLIENT_ID as CLIENT_ID, AVATAR_BASE, TOKEN_KEY } from '../lib/config';
 
 export interface UserProfile {
   name: string;
@@ -24,9 +25,6 @@ declare global {
     google?: any;
   }
 }
-
-const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
-const TOKEN_KEY = 'wandor_google_id_token';
 
 function decodeJwtPayload(jwt: string): Record<string, unknown> | null {
   try {
@@ -57,7 +55,7 @@ function profileFromIdToken(jwt: string): UserProfile | null {
     email,
     avatar:
       picture ||
-      `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(email)}`,
+      `${AVATAR_BASE}?seed=${encodeURIComponent(email)}`,
   };
 }
 

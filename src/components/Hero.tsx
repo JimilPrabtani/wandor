@@ -3,6 +3,7 @@ import { Upload, Sparkles, MapPin, CalendarDays } from 'lucide-react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { apiFetch, ApiError, type ApiTrip } from '../lib/api';
+import { API_GENERATE_PATH, MAX_TRIP_DAYS } from '../lib/config';
 import ItineraryView from './ItineraryView';
 
 const SUGGESTIONS = [
@@ -59,7 +60,7 @@ function friendlyError(err: unknown): string {
     if (err.code === 'provider_quota_exceeded')
       return 'The AI quota is exhausted right now. Please try again later.';
     if (err.code === 'destination_required') return 'Please tell us the destination.';
-    if (err.code === 'days_must_be_1_to_30') return 'Trip length must be between 1 and 30 days.';
+    if (err.code === 'days_must_be_1_to_30') return `Trip length must be between 1 and ${MAX_TRIP_DAYS} days.`;
     if (err.status === 502) return 'Trip generation failed on our end. Please try again in a moment.';
     if (err.code === 'server_misconfigured')
       return 'The AI backend is not configured yet. Please contact support.';
@@ -125,8 +126,8 @@ export default function Hero() {
       setError('Tell us the destination — e.g. "7-day trip to Japan" — or type it in the Destination field.');
       return;
     }
-    if (!Number.isInteger(numDays) || numDays < 1 || numDays > 30) {
-      setError('Trip length must be a whole number between 1 and 30 days.');
+    if (!Number.isInteger(numDays) || numDays < 1 || numDays > MAX_TRIP_DAYS) {
+      setError(`Trip length must be a whole number between 1 and ${MAX_TRIP_DAYS} days.`);
       return;
     }
     // Keep the auto-parsed values visible so the user sees what was used.
@@ -137,7 +138,7 @@ export default function Hero() {
     setResult(null);
     try {
       const data = await apiFetch<{ trip: ApiTrip }>(
-        '/api/trips/generate',
+        API_GENERATE_PATH,
         {
           method: 'POST',
           body: { destination: finalDestination, days: numDays, preferences: activePrompt },

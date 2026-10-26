@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { apiFetch, ApiError, type ApiTrip } from '../lib/api';
+import { API_GENERATE_PATH, MAX_TRIP_DAYS } from '../lib/config';
 import ItineraryView from '../components/ItineraryView';
 import { Sparkles, MapPin, Calendar, Compass, DollarSign, History as HistoryIcon } from 'lucide-react';
 
@@ -34,8 +35,8 @@ export default function AiGenerator() {
       setError('Please enter a destination.');
       return;
     }
-    if (!Number.isInteger(numDays) || numDays < 1 || numDays > 30) {
-      setError('Trip length must be a whole number between 1 and 30 days.');
+    if (!Number.isInteger(numDays) || numDays < 1 || numDays > MAX_TRIP_DAYS) {
+      setError(`Trip length must be a whole number between 1 and ${MAX_TRIP_DAYS} days.`);
       return;
     }
 
@@ -50,7 +51,7 @@ export default function AiGenerator() {
 
     try {
       const data = await apiFetch<{ trip: ApiTrip }>(
-        '/api/trips/generate',
+        API_GENERATE_PATH,
         { method: 'POST', body: { destination: destination.trim(), days: numDays, preferences } },
         getIdToken
       );
@@ -62,7 +63,7 @@ export default function AiGenerator() {
         } else if (err.code === 'destination_required') {
           setError('Please enter a destination.');
         } else if (err.code === 'days_must_be_1_to_30') {
-          setError('Trip length must be between 1 and 30 days.');
+          setError(`Trip length must be between 1 and ${MAX_TRIP_DAYS} days.`);
         } else if (err.status === 401) {
           setError('Your session has expired. Please log in again.');
         } else if (err.status === 502) {

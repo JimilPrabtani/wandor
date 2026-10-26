@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { apiFetch, ApiError, type ApiTrip } from '../lib/api';
+import { API_TRIPS_PATH } from '../lib/config';
 import ItineraryView from '../components/ItineraryView';
 import { getTripImage } from '../data/trips';
 import { Sparkles, Trash2, Calendar, MapPin, User, LogOut, History as HistoryIcon, PlusCircle, AlertCircle, KeyRound, ChevronDown, ChevronUp } from 'lucide-react';
@@ -20,7 +21,7 @@ export default function History() {
 
   useEffect(() => {
     let cancelled = false;
-    apiFetch<{ trips: ApiTrip[]; generated: number; limit: number }>('/api/trips', {}, getIdToken)
+    apiFetch<{ trips: ApiTrip[]; generated: number; limit: number }>(API_TRIPS_PATH, {}, getIdToken)
       .then((data) => {
         if (cancelled) return;
         setTrips(data.trips);
@@ -44,7 +45,7 @@ export default function History() {
     const previous = trips;
     setTrips(trips.filter(t => t.sk !== sk));
     try {
-      await apiFetch(`/api/trips/${encodeURIComponent(sk)}`, { method: 'DELETE' }, getIdToken);
+      await apiFetch(`${API_TRIPS_PATH}/${encodeURIComponent(sk)}`, { method: 'DELETE' }, getIdToken);
     } catch {
       setTrips(previous);
       setError('Could not delete that trip. Please try again.');
