@@ -1,9 +1,10 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { Upload, Sparkles, MapPin, CalendarDays } from 'lucide-react';
+import { Upload, Sparkles } from 'lucide-react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { apiFetch, ApiError, type ApiTrip } from '../lib/api';
 import { API_GENERATE_PATH, MAX_TRIP_DAYS } from '../lib/config';
+import { parseTripPrompt } from '../lib/parseTrip';
 import ItineraryView from './ItineraryView';
 
 const SUGGESTIONS = [
@@ -16,37 +17,7 @@ const SUGGESTIONS = [
   "Show me an action-packed 5-day itinerary for New York City, including Broadway shows, great pizza, and hidden speakeasies...."
 ];
 
-// Best-effort parse of free text: "7-day trip to Japan" -> { destination: "Japan", days: 7 }
-export function parseTripPrompt(text: string): { destination: string; days: string } {
-  const lower = text.toLowerCase();
-  let days = '';
-  const dayMatch = lower.match(/(\d{1,2})\s*-?\s*days?/);
-  if (dayMatch) {
-    days = dayMatch[1];
-  } else if (/two weeks|2 weeks|fortnight/.test(lower)) {
-    days = '14';
-  } else if (/weekend/.test(lower)) {
-    days = '2';
-  } else if (/\ba week\b/.test(lower)) {
-    days = '7';
-  }
-
-  let destination = '';
-  // "trip to X", "in X", "for X" — capture up to 3 capitalized words, stop at punctuation/digits
-  const patterns = [
-    /trip to ([A-Z][a-zA-Z\s-]{2,40}?)(?:\s+in\s|\s+for\s|[.,!]|$|\s+\d)/,
-    /(?:in|to|for)\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+){0,2})/,
-  ];
-  for (const re of patterns) {
-    const m = text.match(re);
-    if (m?.[1]) {
-      destination = m[1].trim().replace(/\s+(in|for|with|and)$/i, '');
-      if (destination.length >= 2 && destination.length <= 40) break;
-      destination = '';
-    }
-  }
-  return { destination, days };
-}
+// Best-effort parse lives in src/lib/parseTrip.ts (single chat-box source of truth).
 
 function friendlyError(err: unknown): string {
   if (err instanceof ApiError) {
@@ -73,8 +44,6 @@ export default function Hero() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const resultRef = useRef<HTMLDivElement>(null);
   const [prompt, setPrompt] = useState('');
-  const [destination, setDestination] = useState('');
-  const [days, setDays] = useState('');
   const [suggestionIndex, setSuggestionIndex] = useState(0);
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -109,7 +78,7 @@ export default function Hero() {
     }
   };
 
-  // Stays on the same page: parse prompt, call backend, render below the chatbox.
+  // Prompt-only: everything (destination, days, style, budget) comes from the chat box.
   const handlePlanMyTrip = async () => {
     setError(null);
     if (!user) {
@@ -118,21 +87,18 @@ export default function Hero() {
     }
     const activePrompt = prompt.trim() || currentSuggestion;
     const parsed = parseTripPrompt(activePrompt);
-    const finalDestination = (destination.trim() || parsed.destination).trim();
-    const finalDaysRaw = (days.trim() || parsed.days || '5').trim();
-    const numDays = Number.parseInt(finalDaysRaw, 10);
+    const finalDestination = parsed.destination.trim();
+    // Default to 5 days when the prompt doesn't state a length.
+    const numDays = Number.parseInt(parsed.days || '5', 10);
 
     if (!finalDestination) {
-      setError('Tell us the destination — e.g. "7-day trip to Japan" — or type it in the Destination field.');
+      setError('Tell us where to go in your message — e.g. "7-day trip to Japan with hidden cafes and hikes".');
       return;
     }
     if (!Number.isInteger(numDays) || numDays < 1 || numDays > MAX_TRIP_DAYS) {
-      setError(`Trip length must be a whole number between 1 and ${MAX_TRIP_DAYS} days.`);
+      setError(`Couldn't find a trip length in your message — include 1–${MAX_TRIP_DAYS} days, e.g. "5-day trip to Paris".`);
       return;
     }
-    // Keep the auto-parsed values visible so the user sees what was used.
-    if (!destination.trim() && parsed.destination) setDestination(parsed.destination);
-    if (!days.trim()) setDays(String(numDays));
 
     setIsGenerating(true);
     setResult(null);
@@ -141,7 +107,7 @@ export default function Hero() {
         API_GENERATE_PATH,
         {
           method: 'POST',
-          body: { destination: finalDestination, days: numDays, preferences: activePrompt },
+          body: { destination: finalDestination, days: numDays, preferences: activePrompt, prompt: activePrompt },
         },
         getIdToken
       );
@@ -184,7 +150,7 @@ export default function Hero() {
               </div>
             )}
 
-            {/* Interactive Textarea */}
+            {/* Chat box only — destination, days, style & budget all come from the prompt text */}
             <textarea
               id="chatbox"
               value={prompt}
@@ -195,32 +161,8 @@ export default function Hero() {
               spellCheck={false}
             />
 
-            {/* Destination + days: auto-filled from the prompt, editable */}
-            <div className="grid grid-cols-1 sm:grid-cols-[1fr_140px] gap-3 mb-4">
-              <label className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-full px-4 py-2.5">
-                <MapPin className="w-4 h-4 text-gray-400 shrink-0" />
-                <span className="sr-only">Destination</span>
-                <input
-                  value={destination}
-                  onChange={(e) => setDestination(e.target.value)}
-                  placeholder="Destination — e.g. Japan"
-                  className="w-full bg-transparent outline-none font-sans text-sm font-medium text-wandor-dark placeholder:text-gray-400"
-                />
-              </label>
-              <label className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-full px-4 py-2.5">
-                <CalendarDays className="w-4 h-4 text-gray-400 shrink-0" />
-                <span className="sr-only">Days (1–30)</span>
-                <input
-                  value={days}
-                  onChange={(e) => setDays(e.target.value.replace(/[^0-9]/g, '').slice(0, 2))}
-                  placeholder="Days — e.g. 7"
-                  inputMode="numeric"
-                  className="w-full bg-transparent outline-none font-sans text-sm font-medium text-wandor-dark placeholder:text-gray-400"
-                />
-              </label>
-            </div>
             <p className="font-sans text-xs text-gray-400 mb-6">
-              Tip: include destination + length in your message (“7-day trip to Japan”) — we fill these in for you.
+              Include destination + length in your message — e.g. “7-day trip to Japan with hidden cafes, food tours and hikes”.
             </p>
 
             {error && (

@@ -69,6 +69,44 @@ Respond with ONLY a JSON object, no markdown fences, matching exactly:
   ]
 }`;
 
+// Server-side prompt-only parsing: when the client sends { prompt },
+// destination + days are extracted here so generation works from text alone.
+// Mirrors src/lib/parseTrip.ts (duplicated — serverless has no shared import).
+function parsePromptServer(text: string): { destination: string; days: string } {
+  const input = String(text ?? '');
+  const lower = input.toLowerCase();
+  let days = '';
+  const dayMatch = lower.match(/(\d{1,2})\s*-?\s*days?/);
+  if (dayMatch) {
+    days = dayMatch[1];
+  } else {
+    const weeksDigit = lower.match(/(\d{1,2})\s*-?\s*weeks?/);
+    if (weeksDigit) {
+      days = String(Math.min(30, Number(weeksDigit[1]) * 7));
+    } else if (/fortnight|two weeks|2 weeks/.test(lower)) {
+      days = '14';
+    } else if (/\bweekend\b/.test(lower)) {
+      days = '2';
+    } else if (/\ba week\b|\bone week\b/.test(lower)) {
+      days = '7';
+    }
+  }
+  let destination = '';
+  const m1 = input.match(
+    /\b(?:trip to|travel to|going to|fly to|visiting|visit|explore|exploring|discover|discovering|into|to|in|for|at)\s+([A-Z][a-zA-Z\-']+(?:\s+[A-Z][a-zA-Z\-']+){0,2})/
+  );
+  if (m1?.[1]) {
+    destination = m1[1].trim().replace(/[.,!;:]+$/g, '');
+  }
+  if (!destination) {
+    const m2 = input.match(
+      /\b(?:trip to|going to|travel to|visit(?:ing)?|explore|exploring|into|to|in|for)\s+([a-zA-Z][a-zA-Z\s\-']{1,39}?)(?:\s+in\s|\s+for\s|\s+with\s|\s+and\s|[.,!]|$|\s+\d)/i
+    );
+    if (m2?.[1]) destination = m2[1].trim().replace(/[.,!;:]+$/g, '');
+  }
+  return { destination, days };
+}
+
 function userPrompt(destination: string, days: number, preferences: string) {
   return `Create a ${days}-day itinerary.
 <user_input>
@@ -309,9 +347,27 @@ export default async function handler(req: any, res: any) {
       .replace(/[\u0000-\u001f\u007f]/g, ' ')
       .trim()
       .slice(0, max);
-  const destination = clean(body.destination, 100);
-  const preferences = clean(body.preferences, 500);
-  const days = Number.parseInt(body.days, 10);
+  // Prompt-only mode: client may send { prompt } with everything in one text.
+  // Fall back to parsing it here so generation works through the prompt alone.
+  // Legacy { destination, days, preferences } is still accepted.
+  const rawPrompt = clean((body as any).prompt, 1000);
+  let destination = clean((body as any).destination, 100);
+  let preferences = clean((body as any).preferences, 1000);
+  let days = Number.parseInt((body as any).days, 10);
+
+  if ((!destination || !Number.isInteger(days)) && rawPrompt) {
+    const parsed = parsePromptServer(rawPrompt);
+    if (!destination && parsed.destination) {
+      destination = clean(parsed.destination, 100);
+    }
+    if (!Number.isInteger(days) && parsed.days) {
+      const pDays = Number.parseInt(parsed.days, 10);
+      if (Number.isInteger(pDays)) days = pDays;
+    }
+    // Default to 5 days when the prompt does not state a length.
+    if (!Number.isInteger(days)) days = 5;
+    if (!preferences) preferences = rawPrompt;
+  }
   if (!destination) return res.status(400).json({ error: 'destination_required' });
   if (!Number.isInteger(days) || days < 1 || days > 30) {
     return res.status(400).json({ error: 'days_must_be_1_to_30' });

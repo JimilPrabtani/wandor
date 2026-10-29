@@ -1,27 +1,17 @@
 import React, { useState } from 'react';
-import { useLocation, Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { apiFetch, ApiError, type ApiTrip } from '../lib/api';
 import { API_GENERATE_PATH, MAX_TRIP_DAYS } from '../lib/config';
+import { parseTripPrompt } from '../lib/parseTrip';
 import ItineraryView from '../components/ItineraryView';
-import { Sparkles, MapPin, Calendar, Compass, DollarSign, History as HistoryIcon } from 'lucide-react';
-
-const SUGGESTED_PROMPTS = [
-  "Hidden cafes, food tours, and bamboo groves — avoid the crowds",
-  "Romantic getaway with oceanfront dining and slow mornings",
-  "Active adventure: hiking fjords, bungee jumping, and glaciers",
-  "Family-friendly with rainforest walks and beach relaxation"
-];
+import { Sparkles, History as HistoryIcon } from 'lucide-react';
 
 export default function AiGenerator() {
   const { getIdToken } = useAuth();
   const location = useLocation();
 
   const [promptText, setPromptText] = useState((location.state as any)?.prompt || '');
-  const [destination, setDestination] = useState('');
-  const [days, setDays] = useState('5');
-  const [travelStyle, setTravelStyle] = useState('Balanced');
-  const [budget, setBudget] = useState('Comfort');
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ApiTrip | null>(null);
@@ -30,21 +20,24 @@ export default function AiGenerator() {
     e.preventDefault();
     setError(null);
 
-    const numDays = Number(days);
-    if (!destination.trim()) {
-      setError('Please enter a destination.');
-      return;
-    }
-    if (!Number.isInteger(numDays) || numDays < 1 || numDays > MAX_TRIP_DAYS) {
-      setError(`Trip length must be a whole number between 1 and ${MAX_TRIP_DAYS} days.`);
+    const fullPrompt = promptText.trim();
+    if (!fullPrompt) {
+      setError('Describe your trip — e.g. "7-day trip to Japan with hidden cafes, food tours and scenic hikes".');
       return;
     }
 
-    const preferences = [
-      promptText.trim(),
-      `Travel style: ${travelStyle}.`,
-      `Budget level: ${budget}.`,
-    ].filter(Boolean).join(' ');
+    // Prompt-only: destination + days are parsed from the chat box text.
+    const parsed = parseTripPrompt(fullPrompt);
+    if (!parsed.destination) {
+      setError('Include a destination in your message — e.g. "7-day trip to Japan with hidden cafes and hikes".');
+      return;
+    }
+    // Default to 5 days when the prompt doesn't state a length.
+    const numDays = Number.parseInt(parsed.days || '5', 10);
+    if (!Number.isInteger(numDays) || numDays < 1 || numDays > MAX_TRIP_DAYS) {
+      setError(`Couldn't find a trip length in your message — include 1–${MAX_TRIP_DAYS} days, e.g. "5-day trip to Paris".`);
+      return;
+    }
 
     setIsGenerating(true);
     setResult(null);
@@ -52,7 +45,15 @@ export default function AiGenerator() {
     try {
       const data = await apiFetch<{ trip: ApiTrip }>(
         API_GENERATE_PATH,
-        { method: 'POST', body: { destination: destination.trim(), days: numDays, preferences } },
+        {
+          method: 'POST',
+          body: {
+            destination: parsed.destination,
+            days: numDays,
+            preferences: fullPrompt,
+            prompt: fullPrompt,
+          },
+        },
         getIdToken
       );
       setResult(data.trip);
@@ -61,9 +62,9 @@ export default function AiGenerator() {
         if (err.status === 402) {
           setError(`You've used all ${err.limit ?? 7} free AI trips. Upgrade to Pro (coming soon) for unlimited generations.`);
         } else if (err.code === 'destination_required') {
-          setError('Please enter a destination.');
+          setError('Include a destination in your message — e.g. "7-day trip to Japan".');
         } else if (err.code === 'days_must_be_1_to_30') {
-          setError(`Trip length must be between 1 and ${MAX_TRIP_DAYS} days.`);
+          setError(`Trip length must be between 1 and ${MAX_TRIP_DAYS} days — include it in your message, e.g. "5-day trip to Paris".`);
         } else if (err.status === 401) {
           setError('Your session has expired. Please log in again.');
         } else if (err.status === 502) {
@@ -102,111 +103,29 @@ export default function AiGenerator() {
             Generate Your Custom AI Trip
           </h1>
           <p className="font-sans text-lg text-wandor-muted max-w-[560px] mx-auto leading-relaxed">
-            Tell our AI what you love and where you want to go. We'll generate a personalized day-by-day itinerary instantly saved to your history.
+            Describe everything in one message — destination, days, style and budget. We'll generate a personalized day-by-day itinerary instantly saved to your history.
           </p>
         </div>
 
-        {/* Interactive Liquid Glass Form Card */}
+        {/* Single chat-box card */}
         <div className="bg-white/85 border-[3px] border-white rounded-[44px] shadow-[0_0_4px_0_rgba(0,0,0,0.15)] backdrop-blur-2xl p-8 max-md:p-6">
           <form onSubmit={handleGenerate} className="space-y-6">
 
-            {/* Prompt Input */}
+            {/* Prompt Input — the only input */}
             <div>
               <label className="block text-xs font-bold uppercase tracking-wider text-wandor-dark mb-2">
-                Describe Your Dream Experience
+                Describe Your Dream Trip
               </label>
               <textarea
                 value={promptText}
                 onChange={(e) => setPromptText(e.target.value)}
-                placeholder="e.g. I want a cultural trip with traditional tea houses, scenic hikes, and authentic ramen spots..."
-                rows={3}
+                placeholder='e.g. 7-day trip to Japan with traditional tea houses, scenic hikes, authentic ramen spots, comfort budget, relaxed pace...'
+                rows={5}
                 className="w-full p-4 bg-white border border-gray-200 rounded-3xl font-sans text-base text-wandor-dark outline-none focus:border-wandor-dark transition-colors resize-none shadow-inner"
               />
-            </div>
-
-            {/* Quick Suggestions */}
-            <div>
-              <p className="text-xs font-bold uppercase tracking-wider text-wandor-muted mb-2">
-                Or click a suggested prompt:
+              <p className="font-sans text-xs text-gray-400 mt-2">
+                Include destination + length — e.g. “7-day trip to Japan with hidden cafes, food tours and hikes”.
               </p>
-              <div className="flex flex-wrap gap-2">
-                {SUGGESTED_PROMPTS.map((suggestion, idx) => (
-                  <button
-                    key={idx}
-                    type="button"
-                    onClick={() => setPromptText(suggestion)}
-                    className="text-left text-xs font-medium text-wandor-dark bg-white/70 border border-gray-200/80 px-3.5 py-2 rounded-2xl hover:bg-white transition-all cursor-pointer"
-                  >
-                    "{suggestion.substring(0, 45)}..."
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Preference Controls Grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-4 border-t border-gray-100">
-
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-wandor-dark mb-2 flex items-center gap-1.5">
-                  <MapPin className="w-3.5 h-3.5 text-wandor-muted" /> Destination
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={destination}
-                  onChange={(e) => setDestination(e.target.value)}
-                  placeholder="e.g. Japan, France, Bali"
-                  className="w-full px-4 py-3 bg-white border border-gray-200 rounded-full font-sans text-sm font-medium text-wandor-dark outline-none focus:border-wandor-dark"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-wandor-dark mb-2 flex items-center gap-1.5">
-                  <Calendar className="w-3.5 h-3.5 text-wandor-muted" /> How Many Days? (1–30)
-                </label>
-                <input
-                  type="number"
-                  required
-                  min={1}
-                  max={30}
-                  step={1}
-                  value={days}
-                  onChange={(e) => setDays(e.target.value)}
-                  placeholder="5"
-                  className="w-full px-4 py-3 bg-white border border-gray-200 rounded-full font-sans text-sm font-medium text-wandor-dark outline-none focus:border-wandor-dark"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-wandor-dark mb-2 flex items-center gap-1.5">
-                  <Compass className="w-3.5 h-3.5 text-wandor-muted" /> Travel Pace & Style
-                </label>
-                <select
-                  value={travelStyle}
-                  onChange={(e) => setTravelStyle(e.target.value)}
-                  className="w-full px-4 py-3 bg-white border border-gray-200 rounded-full font-sans text-sm font-medium text-wandor-dark outline-none focus:border-wandor-dark cursor-pointer"
-                >
-                  <option value="Relaxed">Relaxed (Slow & Leisurely)</option>
-                  <option value="Balanced">Balanced (Culture + Rest)</option>
-                  <option value="Action-Packed">Action-Packed (High Energy)</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-wandor-dark mb-2 flex items-center gap-1.5">
-                  <DollarSign className="w-3.5 h-3.5 text-wandor-muted" /> Target Budget Level
-                </label>
-                <select
-                  value={budget}
-                  onChange={(e) => setBudget(e.target.value)}
-                  className="w-full px-4 py-3 bg-white border border-gray-200 rounded-full font-sans text-sm font-medium text-wandor-dark outline-none focus:border-wandor-dark cursor-pointer"
-                >
-                  <option value="Budget">Budget Friendly</option>
-                  <option value="Comfort">Comfort & Value</option>
-                  <option value="Luxury">Luxury & Premium</option>
-                </select>
-              </div>
-
             </div>
 
             {/* Generation Error */}
@@ -217,7 +136,7 @@ export default function AiGenerator() {
             )}
 
             {/* Submit Action */}
-            <div className="pt-4">
+            <div className="pt-2">
               <button
                 type="submit"
                 disabled={isGenerating}
